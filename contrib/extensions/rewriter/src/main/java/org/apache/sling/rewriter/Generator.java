@@ -22,6 +22,8 @@ import java.io.PrintWriter;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
+import javax.servlet.ServletOutputStream;
+
 /**
  * The <code>Generator</code> interface defines the start of a rewriter pipeline.
  * A generator is not a component managed by the container (OSGi). A
@@ -50,6 +52,8 @@ public interface Generator {
      * @return A print writer.
      */
     PrintWriter getWriter();
+
+    ServletOutputStream getOutputStream();
 
     /**
      * Notify the generator that parsing is finished.

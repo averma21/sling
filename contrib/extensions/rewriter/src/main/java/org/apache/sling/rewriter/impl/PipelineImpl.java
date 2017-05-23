@@ -32,6 +32,8 @@ import org.slf4j.LoggerFactory;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
+import javax.servlet.ServletOutputStream;
+
 /**
  * The <code>PipelineImpl</code> is the heart of the pipeline
  * processing. It uses the configured pipeline components,
@@ -168,6 +170,11 @@ public class PipelineImpl implements Processor {
      */
     public PrintWriter getWriter() {
         return this.generator.getWriter();
+    }
+
+    @Override
+    public ServletOutputStream getOutputStream() {
+        return this.generator.getOutputStream();
     }
 
     /**

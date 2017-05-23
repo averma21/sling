@@ -24,6 +24,8 @@ import org.apache.sling.rewriter.Processor;
 import org.apache.sling.rewriter.ProcessorConfiguration;
 import org.xml.sax.ContentHandler;
 
+import javax.servlet.ServletOutputStream;
+
 /**
  * This is a wrapper for a processor.
  */
@@ -52,6 +54,11 @@ public class ProcessorWrapper implements Processor {
      */
     public PrintWriter getWriter() {
         return delegatee.getWriter();
+    }
+
+    @Override
+    public ServletOutputStream getOutputStream() {
+        return delegatee.getOutputStream();
     }
 
     /**

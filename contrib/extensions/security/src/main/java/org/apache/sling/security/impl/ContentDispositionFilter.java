@@ -17,11 +17,13 @@
 package org.apache.sling.security.impl;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,16 +32,24 @@ import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
 import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
+import javax.servlet.WriteListener;
 
+import org.apache.sling.api.SlingException;
 import org.apache.sling.api.SlingHttpServletRequest;
 import org.apache.sling.api.SlingHttpServletResponse;
 import org.apache.sling.api.resource.Resource;
 import org.apache.sling.api.resource.ValueMap;
 import org.apache.sling.api.wrappers.SlingHttpServletResponseWrapper;
+import org.apache.sling.rewriter.ProcessingContext;
+import org.apache.sling.rewriter.Processor;
+import org.apache.sling.rewriter.ProcessorConfiguration;
+import org.apache.sling.rewriter.ProcessorManager;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.metatype.annotations.Designate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +76,9 @@ public class ContentDispositionFilter implements Filter {
     private Map<String, Set<String>> contentTypesMapping;
 
     private boolean enableContentDispositionAllPaths;
+
+    @Reference
+    private ProcessorManager pipelineManager;
 
     @Activate
     private void activate(ContentDispositionFilterConfiguration configuration) {
@@ -146,9 +159,15 @@ public class ContentDispositionFilter implements Filter {
         final SlingHttpServletRequest slingRequest = (SlingHttpServletRequest) request;
         final SlingHttpServletResponse slingResponse = (SlingHttpServletResponse) response;
 
-        final RewriterResponse rewriterResponse = new RewriterResponse(slingRequest, slingResponse);
+        final RewriterResponse rewriterResponse = new RewriterResponse(slingRequest, slingResponse, pipelineManager);
 
-        chain.doFilter(request, rewriterResponse);
+        boolean errorOccured = true;
+        try {
+            chain.doFilter(request, rewriterResponse);
+            errorOccured = false;
+        } finally {
+            rewriterResponse.finished(errorOccured);
+        }
     }
 
     //---------- PRIVATE METHODS ---------
@@ -184,16 +203,105 @@ public class ContentDispositionFilter implements Filter {
 
         private final Resource resource;
 
-        public RewriterResponse(SlingHttpServletRequest request, SlingHttpServletResponse wrappedResponse) {
+        /** wrapped output stream */
+        private ServletOutputStream outputStream;
+
+        /** The processor manager. */
+        private final ProcessorManager processorManager;
+
+        /** The processor. */
+        private Processor processor;
+
+        /** response content type */
+        private String contentType;
+
+        public RewriterResponse(SlingHttpServletRequest request, SlingHttpServletResponse wrappedResponse,
+                                ProcessorManager processorManager) {
             super(wrappedResponse);
             this.request = request;
             this.resource = request.getResource();
+            this.processorManager = processorManager;
         }
 
         @Override
         public void reset() {
             request.removeAttribute(ATTRIBUTE_NAME);
             super.reset();
+        }
+
+        /**
+         * Inform this response that the request processing is finished.
+         * @throws IOException
+         */
+        public void finished(final boolean errorOccured) throws IOException {
+            if ( this.processor != null ) {
+                this.processor.finished(errorOccured);
+                this.processor = null;
+            }
+        }
+
+
+        @Override
+        public ServletOutputStream getOutputStream()
+                throws java.io.IOException {
+            if ( this.processor != null && this.outputStream == null ) {
+                return new ServletOutputStream() {
+                    @Override
+                    public boolean isReady() {
+                        return false;
+                    }
+
+                    @Override
+                    public void setWriteListener(WriteListener writeListener) {
+                        // nothing to do
+                    }
+
+                    @Override
+                    public void write(int b) throws IOException {
+                        // nothing to do
+                    }
+                };
+            }
+            if (this.outputStream == null) {
+                this.processor = this.getProcessor();
+                if ( this.processor != null ) {
+                    this.outputStream = this.processor.getOutputStream();
+                }
+                if ( this.outputStream == null ) {
+                    this.outputStream = super.getOutputStream();
+                }
+            }
+            return this.outputStream;
+        }
+
+        /**
+         * Search the first matching processor
+         */
+        private Processor getProcessor() {
+            final ProcessingContext processorContext = new ServletProcessingContext(this.request, this,
+                    this.getSlingResponse(), this.contentType);
+            Processor found = null;
+            final List<ProcessorConfiguration> processorConfigs = this.processorManager.getProcessorConfigurations();
+            final Iterator<ProcessorConfiguration> i = processorConfigs.iterator();
+            while ( found == null && i.hasNext() ) {
+                final ProcessorConfiguration config = i.next();
+                if ( config.match(processorContext) ) {
+                    try {
+                        found = this.processorManager.getProcessor(config, processorContext);
+                        this.request.getRequestProgressTracker().log("Found processor for post processing {0}", config);
+                    } catch (final SlingException se) {
+                        // if an exception occurs during setup of the pipeline and we are currently
+                        // already processing an error, we ignore this!
+                        if ( processorContext.getRequest().getAttribute("javax.servlet.error.status_code") != null ) {
+                            this.request.getRequestProgressTracker().log("Ignoring found processor for post processing {0}" +
+                                    " as an error occured ({1}) during setup while processing another error.", config, se);
+                        } else {
+                            throw se;
+                        }
+                    }
+                }
+            }
+            return found;
         }
 
         /**

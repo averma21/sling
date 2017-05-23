@@ -21,6 +21,8 @@ import java.io.PrintWriter;
 
 import org.xml.sax.ContentHandler;
 
+import javax.servlet.ServletOutputStream;
+
 /**
  * A <code>Processor</code> post processes the output.
  */
@@ -41,6 +43,9 @@ public interface Processor {
      * @return A print writer.
      */
     PrintWriter getWriter();
+
+
+    ServletOutputStream getOutputStream();
 
     /**
      * Get the content handler to write the output to.
